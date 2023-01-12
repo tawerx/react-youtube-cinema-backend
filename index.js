@@ -13,96 +13,142 @@ const io = new Server(server);
 const rooms = new Map();
 
 io.on('connection', (socket) => {
-  socket.on('create', ({ videoId, userName, videoTitle, key }) => {
-    if (!rooms.has(key)) {
-      rooms.set(
-        key,
-        new Map([
-          ['users', new Map()],
-          ['videoId', videoId],
-          ['videoTitle', videoTitle],
-          ['time', 0],
-          ['key', key],
-        ]),
-      );
-    }
-    socket.join(key);
+  socket.on('createRoom', ({ name }) => {
+    const roomId = Date.now().toString(16) + Math.random().toString(36).substr(2);
+    rooms.set(
+      roomId,
+      new Map([
+        ['users', new Map()],
+        [
+          'info',
+          new Map([
+            ['selectedVideo', {}],
+            ['offerVideos', []],
+            ['time', 0],
+          ]),
+        ],
+        ['roomId', roomId],
+      ]),
+    );
     rooms
-      .get(key)
+      .get(roomId)
       .get('users')
-      .set(socket.id, {
-        userName,
-        role: rooms.get(key).get('users').size === 0 ? 'admin' : 'user',
-        id: socket.id,
-        time: 0,
-      });
-    socket.emit('role', rooms.get(key).get('users').get(socket.id).role);
-    const usersToClient = [];
-    rooms
-      .get(key)
-      .get('users')
-      .forEach((obj) => usersToClient.push(obj));
-    io.to(key).emit('getUsers', usersToClient);
+      .set(socket.id, { userName: name, role: 'admin', id: socket.id, time: 0 });
+    socket.join(roomId);
+    socket.emit('created', { roomId });
   });
-  socket.on('join', ({ userName, key, videoId, videoTitle }) => {
-    if (rooms.has(key)) {
-      socket.join(key);
+  socket.on('join', ({ roomId, userName }) => {
+    if (rooms.has(roomId)) {
+      socket.join(roomId);
       rooms
-        .get(key)
+        .get(roomId)
         .get('users')
         .set(socket.id, {
           userName,
-          role: rooms.get(key).get('users').size === 0 ? 'admin' : 'user',
+          role: rooms.get(roomId).get('users').size === 0 ? 'admin' : 'user',
           id: socket.id,
           time: 0,
         });
       const usersToClient = [];
       rooms
-        .get(key)
+        .get(roomId)
         .get('users')
         .forEach((obj) => usersToClient.push(obj));
-      io.to(key).emit('getUsers', usersToClient);
-      socket.emit('role', rooms.get(key).get('users').get(socket.id).role);
+      io.to(roomId).emit('getUsers', usersToClient);
+      socket.emit('role', rooms.get(roomId).get('users').get(socket.id).role);
     } else {
       rooms.set(
-        key,
+        roomId,
         new Map([
           ['users', new Map()],
-          ['videoId', videoId],
-          ['videoTitle', videoTitle],
-          ['time', 0],
-          ['key', key],
+          ['info', new Map()],
+          ['roomId', roomId],
         ]),
       );
 
-      socket.join(key);
+      socket.join(roomId);
       rooms
-        .get(key)
+        .get(roomId)
         .get('users')
         .set(socket.id, {
           userName,
-          role: rooms.get(key).get('users').size === 0 ? 'admin' : 'user',
+          role: rooms.get(roomId).get('users').size === 0 ? 'admin' : 'user',
           id: socket.id,
           time: 0,
         });
-      socket.emit('role', rooms.get(key).get('users').get(socket.id).role);
+      socket.emit('role', rooms.get(roomId).get('users').get(socket.id).role);
       const usersToClient = [];
       rooms
-        .get(key)
+        .get(roomId)
         .get('users')
         .forEach((obj) => usersToClient.push(obj));
-      io.to(key).emit('getUsers', usersToClient);
+      io.to(roomId).emit('getUsers', usersToClient);
     }
   });
-  socket.on('checkRoom', ({ key }) => {
-    if (rooms.has(key)) {
+
+  socket.on('setUserName', ({ nickName, roomId }) => {
+    if (rooms.has(roomId)) {
+      rooms.get(roomId).get('users').get(socket.id).userName = nickName;
+      const usersToClient = [];
+      rooms
+        .get(roomId)
+        .get('users')
+        .forEach((obj) => usersToClient.push(obj));
+      io.to(roomId).emit('getUsers', usersToClient);
+    }
+  });
+
+  socket.on('connected', (roomId) => {
+    if (rooms.has(roomId)) {
+      const usersToClient = [];
+      rooms
+        .get(roomId)
+        .get('users')
+        .forEach((obj) => usersToClient.push(obj));
+      const info = {
+        selectedVideo: rooms.get(roomId).get('info').get('selectedVideo'),
+        offerVideos: rooms.get(roomId).get('info').get('offerVideos'),
+        time: rooms.get(roomId).get('info').get('time'),
+      };
+      socket.emit('getInfo', { users: usersToClient, info });
+    }
+  });
+
+  socket.on('checkRoom', ({ roomId }) => {
+    if (rooms.has(roomId)) {
       socket.emit('getAnswerAboutRoom', true);
-      socket.emit('info', {
-        videoTitle: rooms.get(key).get('videoTitle'),
-        videoId: rooms.get(key).get('videoId'),
-      });
+      // socket.emit('info', {
+      //   videoTitle: rooms.get(roomId).get('videoTitle'),
+      //   videoId: rooms.get(roomId).get('videoId'),
+      // });
     } else {
       socket.emit('getAnswerAboutRoom', false);
+    }
+  });
+
+  socket.on('setVideo', ({ roomId, selectedVideo }) => {
+    if (rooms.has(roomId)) {
+      rooms.get(roomId).get('info').set('selectedVideo', selectedVideo);
+      io.to(roomId).emit('getVideo', selectedVideo);
+    }
+  });
+
+  socket.on('setOfferVideo', ({ roomId, offerVideo }) => {
+    if (rooms.has(roomId)) {
+      const videos = rooms.get(roomId).get('info').get('offerVideos');
+      if (videos.length <= 10 && !videos.find((obj) => obj.videoId === offerVideo.videoId)) {
+        videos.push(offerVideo);
+      } else if (!videos.find((obj) => obj.videoId === offerVideo.videoId)) {
+        videos.shift();
+        videos.push(offerVideo);
+      }
+      const offerVideos = [];
+      rooms
+        .get(roomId)
+        .get('info')
+        .get('offerVideos')
+        .forEach((obj) => offerVideos.push(obj));
+      io.to(roomId).emit('getOfferVideos', offerVideos);
     }
   });
 
@@ -142,18 +188,18 @@ io.on('connection', (socket) => {
       }
     }
   });
-  socket.on('socketTime', ({ time, key }) => {
-    if (rooms.has(key) && rooms.get(key).get('users').has(socket.id)) {
-      rooms.get(key).get('users').get(socket.id).time =
+  socket.on('socketTime', ({ time, roomId }) => {
+    if (rooms.has(roomId) && rooms.get(roomId).get('users').has(socket.id)) {
+      rooms.get(roomId).get('users').get(socket.id).time =
         (time - (time % 60)) / 60 + (time % 60) / 100;
       const usersToClient = [];
       rooms
-        .get(key)
+        .get(roomId)
         .get('users')
         .forEach((obj) => usersToClient.push(obj));
 
       socket.emit('currrentSocketTime', time);
-      io.to(key).emit('getUsers', usersToClient);
+      io.to(roomId).emit('getUsers', usersToClient);
     }
   });
 
@@ -166,34 +212,67 @@ io.on('connection', (socket) => {
       });
     }
   });
-  socket.on('roomTime', ({ time, key }) => {
-    if (rooms.has(key)) {
-      rooms.get(key).set('time', time / 60);
+  socket.on('roomTime', ({ time, roomId }) => {
+    if (rooms.has(roomId)) {
+      rooms
+        .get(roomId)
+        .get('info')
+        .set('time', time / 60);
     }
   });
 
-  socket.on('currentSocketTime', ({ key, time }) => {
-    if (rooms.has(key) && rooms.get(key).get('users').has(socket.id)) {
-      rooms.get(key).get('users').get(socket.id).time = time / 60;
+  socket.on('currentSocketTime', ({ roomId, time }) => {
+    if (rooms.has(roomId) && rooms.get(roomId).get('users').has(socket.id)) {
+      rooms.get(roomId).get('users').get(socket.id).time = time / 60;
       const usersToClient = [];
       rooms
-        .get(key)
+        .get(roomId)
         .get('users')
         .forEach((obj) => usersToClient.push(obj));
-      io.to(key).emit('getUsers', usersToClient);
+      io.to(roomId).emit('getUsers', usersToClient);
     }
   });
 
-  socket.on('syncUser', ({ key }) => {
-    if (rooms.has(key) && rooms.get(key).get('users').has(socket.id)) {
-      socket.emit('syncUsersToRoomTime', rooms.get(key).get('time') * 60);
+  socket.on('deleteOfferVideo', ({ roomId, videoId }) => {
+    if (rooms.has(roomId)) {
+      const oldOffer = rooms.get(roomId).get('info').get('offerVideos');
+      rooms
+        .get(roomId)
+        .get('info')
+        .set(
+          'offerVideos',
+          oldOffer.filter((obj) => obj.videoId != videoId),
+        );
+      const offerVideos = [];
+      rooms
+        .get(roomId)
+        .get('info')
+        .get('offerVideos')
+        .forEach((obj) => offerVideos.push(obj));
+      io.to(roomId).emit('getOfferVideos', offerVideos);
     }
   });
 
-  socket.on('syncAdmin', ({ key, time }) => {
-    if (rooms.has(key) && rooms.get(key).get('users').has(socket.id)) {
-      rooms.get(key).set('time', time / 60);
-      io.to(key).emit('syncUsersByAdmin', rooms.get(key).get('time') * 60);
+  socket.on('adminPause', ({ roomId }) => {
+    io.to(roomId).emit('pause');
+  });
+  socket.on('adminPlay', ({ roomId }) => {
+    io.to(roomId).emit('play');
+  });
+
+  socket.on('syncUser', ({ roomId }) => {
+    if (rooms.has(roomId) && rooms.get(roomId).get('users').has(socket.id)) {
+      socket.emit('syncUsersToRoomTime', rooms.get(roomId).get('info').get('time') * 60);
+    }
+  });
+
+  socket.on('syncAdmin', ({ roomId, time }) => {
+    if (rooms.has(roomId) && rooms.get(roomId).get('users').has(socket.id)) {
+      rooms
+        .get(roomId)
+        .get('info')
+        .set('time', time / 60);
+      io.to(roomId).emit('syncUsersByAdmin', rooms.get(roomId).get('info').get('time') * 60);
     }
   });
   socket.on('disconnect', () => {
@@ -201,7 +280,8 @@ io.on('connection', (socket) => {
       let findRoom;
       rooms.forEach((obj) => {
         if (obj.get('users').has(socket.id)) {
-          findRoom = obj.get('key');
+          findRoom = obj.get('roomId');
+          socket.leave(findRoom);
           if (obj.get('users').get(socket.id).role == 'admin' && obj.get('users').size >= 2) {
             obj.get('users').delete(socket.id);
             const newAdminKey = obj.get('users').keys().next().value;
